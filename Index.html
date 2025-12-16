@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Dashboard Contratos 2.0 (MVP)</title>
+  <style>
+    body { font-family: system-ui, Arial; margin: 24px; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 16px; max-width: 980px; }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; }
+    input { padding: 10px; border: 1px solid #ccc; border-radius: 10px; min-width: 220px; }
+    button { padding: 10px 14px; border: 1px solid #111; border-radius: 10px; background: #111; color: #fff; cursor: pointer; }
+    button.secondary { background: #fff; color: #111; }
+    .muted { color: #666; font-size: 14px; }
+    .error { color: #b00020; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th, td { border-bottom: 1px solid #eee; padding: 10px; text-align: left; font-size: 14px; }
+    th { background: #fafafa; position: sticky; top: 0; }
+    .hidden { display: none; }
+    .pill { display: inline-block; padding: 4px 10px; border-radius: 999px; background: #f2f2f2; font-size: 12px; }
+  </style>
+</head>
+
+<body>
+  <div class="card">
+    <h2>Dashboard de Contratos 2.0 — MVP</h2>
+    <p class="muted">Frontend (GitHub Pages) → Apps Script API → Google Sheets</p>
+
+    <hr>
+
+    <div id="loginBox">
+      <h3>Login</h3>
+      <div class="row">
+        <input id="username" placeholder="Usuário (ex: iago.nunes)" autocomplete="username" />
+        <input id="password" placeholder="Senha" type="password" autocomplete="current-password" />
+        <button id="btnLogin">Entrar</button>
+      </div>
+      <p id="loginMsg" class="muted"></p>
+      <p id="loginErr" class="error"></p>
+    </div>
+
+    <div id="appBox" class="hidden">
+      <div class="row" style="align-items:center; justify-content: space-between;">
+        <div>
+          <span class="pill" id="whoami"></span>
+          <span class="pill" id="tokenExp"></span>
+        </div>
+        <div class="row">
+          <button class="secondary" id="btnLoad">Carregar contratos</button>
+          <button id="btnLogout">Logout</button>
+        </div>
+      </div>
+
+      <p id="appMsg" class="muted"></p>
+      <p id="appErr" class="error"></p>
+
+      <div style="max-height: 520px; overflow:auto; border:1px solid #eee; border-radius:12px; margin-top:12px;">
+        <table id="tbl">
+          <thead><tr id="thead"></tr></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+<script>
+  // ✅ URL do seu Web App (Apps Script)
+  const API_URL = "https://script.google.com/macros/s/AKfycbyDbq2fvy2rreKzRcGx-cdXmkzSBHdV_HiBuQffmvxTT-8rkt1KT6JgJ-kQEU39ppG6/exec";
+
+  function setMsg(el, text) { el.textContent = text || ""; }
+  function show(el) { el.classList.remove("hidden"); }
+  function hide(el) { el.classList.add("hidden"); }
+
+  function getToken() { return localStorage.getItem("token") || ""; }
+  function setToken(t) { localStorage.setItem("token", t); }
+  function clearToken() { localStorage.removeItem("token"); localStorage.removeItem("exp"); localStorage.removeItem("username"); }
+  function setSession(username, exp) {
+    localStorage.setItem("username", username || "");
+    localStorage.setItem("exp", exp || "");
+  }
+
+  async function apiRequest(action, payload = {}) {
+    const token = getToken();
+    const res = await fetch(API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ action, payload, token })
+    });
+    const json = await res.json();
+    if (!json.ok) throw new Error(json.error || "Erro desconhecido");
+    return json.data;
+  }
+
+  // UI refs
+  const loginBox = document.getElementById("loginBox");
+  const appBox = document.getElementById("appBox");
+
+  const loginMsg = document.getElementById("loginMsg");
+  const loginErr = document.getElementById("loginErr");
+  const appMsg = document.getElementById("appMsg");
+  const appErr = document.getElementById("appErr");
+
+  const whoami = document.getElementById("whoami");
+  const tokenExp = document.getElementById("tokenExp");
+
+  const thead = document.getElementById("thead");
+  const tbody = document.getElementById("tbody");
+
+  function renderTable(headers, rows) {
+    thead.innerHTML = "";
+    tbody.innerHTML = "";
+
+    headers.forEach(h => {
+      const th = document.createElement("th");
+      th.textContent = h;
+      thead.appendChild(th);
+    });
+
+    rows.forEach(r => {
+      const tr = document.createElement("tr");
+      headers.forEach(h => {
+        const td = document.createElement("td");
+        td.textContent = r[h] ?? "";
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+  }
+
+  async function doLogin() {
+    setMsg(loginErr, "");
+    setMsg(loginMsg, "Entrando...");
+
+    const username = document.getElementById("username").value.trim();
+    const password = document.getElementById("password").value;
+
+    try {
+      const data = await apiRequest("auth.login", { username, password });
+      setToken(data.token);
+      setSession(data.username, data.exp);
+
+      whoami.textContent = "Usuário: " + data.username;
+      tokenExp.textContent = "Expira: " + (data.exp || "-");
+
+      hide(loginBox);
+      show(appBox);
+      setMsg(loginMsg, "");
+      setMsg(appMsg, "Logado. Clique em “Carregar contratos”.");
+    } catch (e) {
+      setMsg(loginMsg, "");
+      setMsg(loginErr, e.message);
+    }
+  }
+
+  async function doLogout() {
+    setMsg(appErr, "");
+    setMsg(appMsg, "Saindo...");
+    try { await apiRequest("auth.logout", {}); } catch (e) {}
+    clearToken();
+    hide(appBox);
+    show(loginBox);
+    setMsg(appMsg, "");
+  }
+
+  async function loadContracts() {
+    setMsg(appErr, "");
+    setMsg(appMsg, "Carregando contratos...");
+    try {
+      const data = await apiRequest("contracts.list", {});
+      renderTable(data.headers, data.rows);
+      setMsg(appMsg, `OK — ${data.rows.length} contratos carregados.`);
+    } catch (e) {
+      setMsg(appErr, e.message);
+      setMsg(appMsg, "");
+      if (String(e.message || "").toLowerCase().includes("token")) {
+        clearToken();
+        hide(appBox);
+        show(loginBox);
+      }
+    }
+  }
+
+  // Bootstrap session
+  (function init() {
+    const t = getToken();
+    const u = localStorage.getItem("username");
+    const exp = localStorage.getItem("exp");
+
+    if (t && u) {
+      whoami.textContent = "Usuário: " + u;
+      tokenExp.textContent = "Expira: " + (exp || "-");
+      hide(loginBox);
+      show(appBox);
+      setMsg(appMsg, "Sessão restaurada. Clique em “Carregar contratos”.");
+    }
+  })();
+
+  document.getElementById("btnLogin").addEventListener("click", doLogin);
+  document.getElementById("btnLogout").addEventListener("click", doLogout);
+  document.getElementById("btnLoad").addEventListener("click", loadContracts);
+</script>
+</body>
+</html>
